@@ -37,6 +37,14 @@ function writeDesign(d) {
 const STATUSES = ['active', 'abandoned', 'paid'];
 const STR_FIELDS = ['marketingProduct', 'theme', 'designMode', 'heroImageId', 'selectedPackage'];
 
+// Conservative email format check. Normalizes to trimmed lowercase.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function normalizeEmail(v) {
+  if (typeof v !== 'string') return null;
+  const e = v.trim().toLowerCase();
+  return EMAIL_RE.test(e) && e.length <= 254 ? e : null;
+}
+
 function sanitizeImages(arr) {
   if (!Array.isArray(arr)) return undefined;
   return arr.slice(0, 200).map((im) => ({
@@ -68,6 +76,22 @@ function applyFields(target, body) {
   }
   if ('images' in body) { const s = sanitizeImages(body.images); if (s) target.images = s; }
   if ('status' in body && STATUSES.includes(body.status)) target.status = body.status;
+
+  // ── Email capture (Milestone 2) ──────────────────────────────────────────
+  // consent must be boolean; only a VALID normalized email is stored, and a valid stored
+  // email is never overwritten by an invalid one. emailCapturedAt is stamped once when a
+  // valid email + consent===true first coincide (never overwritten if already set).
+  if ('consentToEmail' in body && typeof body.consentToEmail === 'boolean') {
+    target.consentToEmail = body.consentToEmail;
+  }
+  if ('email' in body) {
+    const normalized = normalizeEmail(body.email);
+    if (normalized) target.email = normalized;
+    // invalid email: ignore (does not overwrite a valid stored email)
+  }
+  if (target.email && target.consentToEmail === true && !target.emailCapturedAt) {
+    target.emailCapturedAt = new Date().toISOString();
+  }
 }
 
 const router = express.Router();
@@ -81,6 +105,7 @@ router.post('/', (req, res) => {
     currentStep: 0, marketingProduct: null, theme: null, designMode: 'smart',
     heroImageId: null, textFields: {}, selectedPackage: null, selectedAddOns: [],
     images: [], status: 'active',
+    email: null, emailCapturedAt: null, consentToEmail: false,
   };
   applyFields(d, req.body);
   try { writeDesign(d); } catch (e) { return res.status(500).json({ error: 'write_failed' }); }
