@@ -20,5 +20,7 @@ app.get('/', (req, res) => res.json({ status: 'ok' }));
 
 // Milestone 1: automatic design save + resume
 app.use('/api/saved-designs', require('./saved-designs'));
+// Milestone 3: abandoned-cart recovery (no email sending yet)
+app.use('/api/recovery-emails', require('./recovery-emails'));
 
 app.listen(PORT, '0.0.0.0', () => console.log('Running on port ' + PORT));

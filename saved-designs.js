@@ -13,37 +13,12 @@
 //  No photo binaries, no payment/card data, no login.
 // ============================================================
 const express = require('express');
-const fs      = require('fs');
-const path    = require('path');
 const crypto  = require('crypto');
-
-const DATA_DIR = path.join(__dirname, 'data', 'saved-designs');
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-// Only accept ids we generate (uuid v4) — blocks path traversal.
-const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const isValidId = (id) => typeof id === 'string' && ID_RE.test(id);
-const idPath = (id) => path.join(DATA_DIR, id + '.json');
-
-function readDesign(id) {
-  if (!isValidId(id)) return null;
-  try { return JSON.parse(fs.readFileSync(idPath(id), 'utf8')); }
-  catch (e) { return null; }
-}
-function writeDesign(d) {
-  fs.writeFileSync(idPath(d.id), JSON.stringify(d, null, 2));
-}
+const store   = require('./store');
+const { isValidId, readDesign, writeDesign, listDesigns, normalizeEmail, isAbandonable } = store;
 
 const STATUSES = ['active', 'abandoned', 'paid'];
 const STR_FIELDS = ['marketingProduct', 'theme', 'designMode', 'heroImageId', 'selectedPackage'];
-
-// Conservative email format check. Normalizes to trimmed lowercase.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-function normalizeEmail(v) {
-  if (typeof v !== 'string') return null;
-  const e = v.trim().toLowerCase();
-  return EMAIL_RE.test(e) && e.length <= 254 ? e : null;
-}
 
 function sanitizeImages(arr) {
   if (!Array.isArray(arr)) return undefined;
@@ -92,6 +67,11 @@ function applyFields(target, body) {
   if (target.email && target.consentToEmail === true && !target.emailCapturedAt) {
     target.emailCapturedAt = new Date().toISOString();
   }
+
+  // ── Reactivation (Milestone 3) ───────────────────────────────────────────
+  // An explicit move back to 'active' clears abandoned/recovery state so the customer's
+  // returning session is no longer eligible for recovery emails.
+  if (body.status === 'active') { target.abandonedAt = null; target.recoveryStage = null; }
 }
 
 const router = express.Router();
@@ -106,6 +86,7 @@ router.post('/', (req, res) => {
     heroImageId: null, textFields: {}, selectedPackage: null, selectedAddOns: [],
     images: [], status: 'active',
     email: null, emailCapturedAt: null, consentToEmail: false,
+    abandonedAt: null, recoveryStage: null, recoveryEmailLog: [],
   };
   applyFields(d, req.body);
   try { writeDesign(d); } catch (e) { return res.status(500).json({ error: 'write_failed' }); }
@@ -135,8 +116,26 @@ router.post('/:id/heartbeat', (req, res) => {
   const d = readDesign(req.params.id);
   if (!d) return res.status(404).json({ error: 'not_found' });
   d.lastActivityAt = new Date().toISOString();
+  // A live heartbeat means the customer is back → reactivate an abandoned design.
+  if (d.status === 'abandoned') store.reactivate(d);
   try { writeDesign(d); } catch (e) { return res.status(500).json({ error: 'write_failed' }); }
   res.json({ id: d.id, lastActivityAt: d.lastActivityAt, status: d.status });
+});
+
+// POST /api/saved-designs/mark-abandoned — scan all designs; mark eligible ones abandoned.
+// (Literal path; distinct from POST '/' and POST '/:id/heartbeat'.)
+router.post('/mark-abandoned', (req, res) => {
+  const now = Date.now();
+  const ids = [];
+  for (const d of listDesigns()) {
+    if (!isAbandonable(d, now)) continue;
+    d.status = 'abandoned';
+    d.abandonedAt = new Date(now).toISOString();
+    d.recoveryStage = null;
+    if (!Array.isArray(d.recoveryEmailLog)) d.recoveryEmailLog = [];
+    try { writeDesign(d); ids.push(d.id); } catch (e) { /* skip unwritable */ }
+  }
+  res.json({ count: ids.length, ids });
 });
 
 module.exports = router;
