@@ -22,5 +22,7 @@ app.get('/', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/saved-designs', require('./saved-designs'));
 // Milestone 3: abandoned-cart recovery (no email sending yet)
 app.use('/api/recovery-emails', require('./recovery-emails'));
+// Milestone 4: read-only admin/reporting endpoints (protected by ADMIN_API_KEY)
+app.use('/api/admin', require('./admin'));
 
 app.listen(PORT, '0.0.0.0', () => console.log('Running on port ' + PORT));
