@@ -84,8 +84,63 @@ function reactivate(d) {
   d.recoveryStage = null;
 }
 
+// ── Orders (Milestone 5) ─────────────────────────────────────
+// File-based orders at data/orders/<id>.json. Same uuid ids (isValidId).
+// NEVER stores card numbers or payment-method details — only whitelisted order fields.
+const ORDERS_DIR = path.join(__dirname, 'data', 'orders');
+fs.mkdirSync(ORDERS_DIR, { recursive: true });
+const orderPath = (id) => path.join(ORDERS_DIR, id + '.json');
+function readOrder(id) {
+  if (!isValidId(id)) return null;
+  try { return JSON.parse(fs.readFileSync(orderPath(id), 'utf8')); }
+  catch (e) { return null; }
+}
+function writeOrder(o) { fs.writeFileSync(orderPath(o.id), JSON.stringify(o, null, 2)); }
+function listOrders() {
+  let files = [];
+  try { files = fs.readdirSync(ORDERS_DIR); } catch (e) { return []; }
+  const out = [];
+  for (const f of files) { if (!f.endsWith('.json')) continue; const o = readOrder(f.slice(0, -5)); if (o) out.push(o); }
+  return out;
+}
+
+const ORDER_STATUSES = [
+  'checkout_started', 'payment_pending', 'paid', 'preparing_artwork', 'ready_for_print',
+  'sent_to_print_provider', 'printing', 'quality_check', 'shipped', 'delivered', 'cancelled', 'refunded',
+];
+// Allowed forward transitions (+ cancel/refund branches). cancelled/refunded are terminal.
+const ORDER_TRANSITIONS = {
+  checkout_started:       ['payment_pending', 'paid', 'cancelled'],
+  payment_pending:        ['paid', 'cancelled'],
+  paid:                   ['preparing_artwork', 'cancelled', 'refunded'],
+  preparing_artwork:      ['ready_for_print', 'cancelled', 'refunded'],
+  ready_for_print:        ['sent_to_print_provider', 'cancelled', 'refunded'],
+  sent_to_print_provider: ['printing', 'cancelled', 'refunded'],
+  printing:               ['quality_check', 'cancelled', 'refunded'],
+  quality_check:          ['shipped', 'printing', 'cancelled', 'refunded'],
+  shipped:                ['delivered', 'refunded'],
+  delivered:              ['refunded'],
+  cancelled:              [],
+  refunded:               [],
+};
+const isValidOrderStatus = (s) => ORDER_STATUSES.includes(s);
+const canTransition = (from, to) => Array.isArray(ORDER_TRANSITIONS[from]) && ORDER_TRANSITIONS[from].includes(to);
+// An order has "reached paid" if its history ever recorded a paid status.
+const orderReachedPaid = (o) => Array.isArray(o.statusHistory) && o.statusHistory.some((e) => e && e.status === 'paid');
+
+// Mark a linked saved design as paid, if it exists. Returns true if updated.
+function markDesignPaid(savedDesignId) {
+  const d = readDesign(savedDesignId);
+  if (!d) return false;
+  d.status = 'paid';
+  d.updatedAt = new Date().toISOString();
+  try { writeDesign(d); return true; } catch (e) { return false; }
+}
+
 module.exports = {
   DATA_DIR, isValidId, readDesign, writeDesign, listDesigns, normalizeEmail,
   ABANDON_AFTER_MS, RECOVERY_STAGES, STAGE_AFTER_MS, LOG_STATUSES,
   isValidStage, isValidLogStatus, isAbandonable, recommendStage, reactivate,
+  ORDERS_DIR, readOrder, writeOrder, listOrders,
+  ORDER_STATUSES, ORDER_TRANSITIONS, isValidOrderStatus, canTransition, orderReachedPaid, markDesignPaid,
 };

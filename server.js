@@ -24,5 +24,7 @@ app.use('/api/saved-designs', require('./saved-designs'));
 app.use('/api/recovery-emails', require('./recovery-emails'));
 // Milestone 4: read-only admin/reporting endpoints (protected by ADMIN_API_KEY)
 app.use('/api/admin', require('./admin'));
+// Milestone 5: order lifecycle foundation (no Stripe / print-provider integration)
+app.use('/api/orders', require('./orders'));
 
 app.listen(PORT, '0.0.0.0', () => console.log('Running on port ' + PORT));
